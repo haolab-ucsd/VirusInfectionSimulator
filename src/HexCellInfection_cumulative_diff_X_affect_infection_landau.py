@@ -13,16 +13,32 @@ This is a temporary script file.
 
 
 import numpy as np 
-from scipy import asarray as ar,exp
+from numpy import asarray as ar,exp
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import RegularPolygon
 import tellurium as te
 from joblib import Parallel, delayed
+import argparse
+from pathlib import Path
 
 ############# FUNCTION ZOO ####################################################################
 ###############################################################################################
 
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--pretreat", action="store_true",
+                   help="Enable pretreatment (uniform initial dX and pre-run before infection).")
+    p.add_argument("--t_start", type=float, default=0.0,
+                   help="Pretreatment duration (time units). Ignored if --pretreat is not set.")
+    p.add_argument("--dX0", type=float, default=10.0,
+                   help="Uniform initial dX value for pretreatment (default 10). Ignored if --pretreat is not set.")
+    p.add_argument("--runs", type=int, default=40)
+    p.add_argument("--cell_iter", type=int, default=10000)
+    p.add_argument("--n_jobs", type=int, default=20)
+    p.add_argument("--out_dir", type=str, default="./",
+               help="Output directory for CSV files.")
+    return p.parse_args()
 
 #%% get neighbors idx
 def get_neighbors(cells,cell_idx):
@@ -108,7 +124,7 @@ def generate_cells(iter_num):
     return M
 
 #%% let's generate tellurium script
-def generate_reactions(cells):
+def generate_reactions(cells, dX0: float = 0.0):
     # write reactions
     S = [];
     for i in range(len(cells)):
@@ -164,23 +180,13 @@ def generate_reactions(cells):
     C = [];
     for i in range(len(cells)):
         # seed all cells to be uninfected for now
-        if i == cells.index([0,0,0]):
-            C.append('UI_{}=1'.format(i))
-            C.append('I_{}=0'.format(i))
-            C.append('DA_{}=0'.format(i))
-            C.append('DB_{}=0'.format(i))
-            C.append('DE_{}=0'.format(i))
-            C.append('X_{}=0'.format(i))
-            C.append('dX_{}=0'.format(i))
-            
-        else:    
-            C.append('UI_{}=1'.format(i))
-            C.append('I_{}=0'.format(i))
-            C.append('DA_{}=0'.format(i))
-            C.append('DB_{}=0'.format(i))
-            C.append('DE_{}=0'.format(i))
-            C.append('X_{}=0'.format(i))
-            C.append('dX_{}=0'.format(i))
+        C.append(f'UI_{i}=1')
+        C.append(f'I_{i}=0')
+        C.append(f'DA_{i}=0')
+        C.append(f'DB_{i}=0')
+        C.append(f'DE_{i}=0')
+        C.append(f'X_{i}=0')
+        C.append(f'dX_{i}={dX0}')
 
     
     # write rate constant values, placeholder for now
@@ -251,15 +257,21 @@ def getCellInfo(c,cells,result_array,t_step,names):
 #################################################################
 #################################################################
 #%% MAIN SCRIPT
+args = parse_args()
+out_dir = Path(args.out_dir)
+out_dir.mkdir(parents=True, exist_ok=True)
 
-t_start = 0
-for run in range(40):
+pretreat = args.pretreat
+t_start = args.t_start if pretreat else 0.0
+dX0 = args.dX0 if pretreat else 0.0
+
+for run in range( args.runs):
     # generate some cells
-    cells = generate_cells(10000)
+    cells = generate_cells(args.cell_iter)
     print('cell num: {}'.format(len(cells)))
     #print('S1')
     # generate reaction object
-    S = generate_reactions(cells)
+    S = generate_reactions(cells, dX0=dX0)
     #print('S2')
     # set parameters; feel free to change them!
     r = te.loada(S)
@@ -284,11 +296,13 @@ for run in range(40):
     
     # Start the simulation
     if t_start > 0:
-        result = r.simulate(0,t_start,t_start)
+        _ = r.simulate(0,t_start, 2)
     # after t_start, infect the cell in the middle and then simulate again
-    exec('r.UI_{} = 0'.format(cells.index([0,0,0])))
-    exec('r.I_{} = 1'.format(cells.index([0,0,0])))
-    result =r.simulate(0,500,100)
+    center = cells.index([0,0,0])
+    r[f"UI_{center}"] = 0
+    r[f"I_{center}"] = 1
+    t_end = t_start + 500
+    result = r.simulate(t_start,t_end,100)
     print('Simulaton done')
     
      
@@ -313,7 +327,7 @@ for run in range(40):
     result_array = np.array(result) # need to convert NamedArray to array for pickable obj
     for t_step in range(len(result)):
         
-        sub_out_list = Parallel(n_jobs=20)(delayed(getCellInfo)(c,cells,result_array,t_step,names) 
+        sub_out_list = Parallel(n_jobs=args.n_jobs)(delayed(getCellInfo)(c,cells,result_array,t_step,names) 
                                       for c in range(len(cells)) ) 
         out_list = out_list + sub_out_list    
 
@@ -324,12 +338,13 @@ for run in range(40):
     df['H'] = [out[4] for out in out_list]
     df['V'] = [out[5] for out in out_list]
     df['T'] = [out[6] for out in out_list]
+    df['T'] = df['T'] - t_start
     df['T_step'] = [out[7] for out in out_list]
     df['Df'] = [out[8] for out in out_list]
     df['S']  = [out[9] for out in out_list]
     df['Deathf'] = [out[10] for out in out_list]
-    print('done with run {}'.format(run+1))      
-    df.to_csv('/home/phn013/VirusHost/data/csvs/run{}_tstart{}.csv'.format(run,t_start),index=None)        
-   
+    print('done with run {}'.format(run+1))
+    out_path = out_dir / f"run{run}_pretreat{int(pretreat)}_dX0{dX0}_tstart{t_start}.csv"
+    df.to_csv(out_path, index=None)
     
 
