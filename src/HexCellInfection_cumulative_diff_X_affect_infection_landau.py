@@ -21,9 +21,30 @@ import tellurium as te
 from joblib import Parallel, delayed
 import argparse
 from pathlib import Path
-
+import json
+from dataclasses import dataclass, asdict, replace
+from typing import Dict, Any, Optional
 ############# FUNCTION ZOO ####################################################################
 ###############################################################################################
+@dataclass
+class ModelParams:
+    k_I: float = 0.05
+    k_dXI: float = 1.0
+    k_A: float = 0.008
+    k_B: float = 0.0001
+    k_XA: float = 0.0
+    k_XB: float = 0.03
+    k_da: float = 0.01
+    k_E: float = 0.006
+    k_Xmax: float = 0.4
+    k_Xhalf: float = 1.0
+    k_Xdeg: float = 0.001
+    k_fX: float = 0.2
+    k_d: float = 1.0
+
+SCALED_KEYS = {
+    "k_I", "k_A", "k_B", "k_XA", "k_XB", "k_da", "k_E", "k_Xmax", "k_Xhalf", "k_Xdeg", "k_fX"
+}
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -38,8 +59,26 @@ def parse_args():
     p.add_argument("--n_jobs", type=int, default=20)
     p.add_argument("--out_dir", type=str, default="./",
                help="Output directory for CSV files.")
+    p.add_argument("--param_file", type=str, default=None,
+               help="JSON file with parameter overrides (e.g., rigoe.json).")
+    p.add_argument("--param_scale", type=float, default=4.1,
+               help="Scale factor applied to kinetic parameters in SCALED_KEYS (default 4.1).")
     return p.parse_args()
 
+def load_params_json(path: str) -> Dict[str, Any]:
+    with open(path, "r") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Parameter file must be a JSON object (dict).")
+    return data
+
+def override_params(base: ModelParams, updates: Dict[str, Any]) -> ModelParams:
+    allowed = set(base.__dataclass_fields__.keys())
+    unknown = set(updates.keys()) - allowed
+    if unknown:
+        raise KeyError(f"Unknown parameter keys in file: {sorted(unknown)}")
+    return replace(base, **updates)
+            
 #%% get neighbors idx
 def get_neighbors(cells,cell_idx):
     
@@ -124,7 +163,10 @@ def generate_cells(iter_num):
     return M
 
 #%% let's generate tellurium script
-def generate_reactions(cells, dX0: float = 0.0):
+def generate_reactions(cells, dX0: float = 0.0, params: Optional[ModelParams] = None, param_scale:float = 4.1):
+    if params is None:
+        raise ValueError("params must be provided to generate_reactions()")
+    
     # write reactions
     S = [];
     for i in range(len(cells)):
@@ -191,20 +233,11 @@ def generate_reactions(cells, dX0: float = 0.0):
     
     # write rate constant values, placeholder for now
     K = []
-    K.append('k_I = 0.4')
-    K.append('k_dXI = 1')
-    K.append('k_A = 0.2')
-    K.append('k_B = 0.01')
-    K.append('k_XA = 0.05')
-    K.append('k_XB = 0.01')
-    K.append('k_da = 2')
-    K.append('k_E = 0.1')
-    K.append('k_Xmax = 0.001')
-    K.append('k_Xhalf = 0.01')
-    K.append('k_Xdeg = 0.0002')
-    K.append('k_fX = 0.0001')
-    K.append('k_d = 0.0001')
-    
+    for k, v in asdict(params).items():
+        if k in SCALED_KEYS:
+            K.append(f"{k} = {v / param_scale}")
+        else:
+            K.append(f"{k} = {v}")
     # combine everything into the tellurium script
     # at specified time t_start, set the center cell to be infected
     
@@ -265,13 +298,23 @@ pretreat = args.pretreat
 t_start = args.t_start if pretreat else 0.0
 dX0 = args.dX0 if pretreat else 0.0
 
+base_params = ModelParams()  # Control default
+
+if args.param_file is not None:
+    updates = load_params_json(args.param_file)
+    for k, v in updates.items():
+        if not isinstance(v, (int, float)):
+            raise TypeError(f"{k} must be a number, got {type(v)}")
+    
+    base_params = override_params(base_params, updates)
+    
 for run in range( args.runs):
     # generate some cells
     cells = generate_cells(args.cell_iter)
     print('cell num: {}'.format(len(cells)))
     #print('S1')
     # generate reaction object
-    S = generate_reactions(cells, dX0=dX0)
+    S = generate_reactions(cells, dX0=dX0, params = base_params, param_scale = args.param_scale)
     #print('S2')
     # set parameters; feel free to change them!
     r = te.loada(S)
@@ -279,20 +322,6 @@ for run in range( args.runs):
     r.integrator = 'gillespie'
     r.integrator.variable_step_size = False
     r.setSeed(run)
-    r.k_I = 0.05/4.1 # infection rate
-    r.k_dXI = 1 # attenuating factor for diffusion molecule dX on the reduction of infection rate  
-    r.k_A  = 0.008/4.1 # death type A rate - neighbor induced was 0.0006 0.005
-    r.k_B = 0.0001/4.1 # death type B rate - neighbor induced
-    r.k_XA  = 0.000/4.1 # death type A rate - death factor induced
-    r.k_XB  = 0.03/4.1 # death type B rate - death factor induced was 0.03
-    r.k_da = 0.01/4.1 # fold increase in death type A induction strength
-               # wrt being next to a infected dead cell vs a live infected one 
-    r.k_E  = 0.006/4.1 # defunct rate - rate where a dead cell no longer contribute to anythin
-    r.k_Xmax = 0.4/4.1 # max death factor producing rate - death factor is a protein being expressed in the cell
-    r.k_Xhalf = 1.0/4.1 # k1/2 of the effect of diffusing molecule on death factor expression - death factor is a protein being expressed in the cell
-    r.k_Xdeg = 0.001/4.1 # death factor degradation rate
-    r.k_fX = 0.2/4.1 # production rate of the diffusing molecule was 0.1
-    r.k_d = 1 # diffusion rate of the diffusion molecule to the neighbor
     
     # Start the simulation
     if t_start > 0:
@@ -346,5 +375,9 @@ for run in range( args.runs):
     print('done with run {}'.format(run+1))
     out_path = out_dir / f"run{run}_pretreat{int(pretreat)}_dX0{dX0}_tstart{t_start}.csv"
     df.to_csv(out_path, index=None)
+    used_param_path = out_dir / f"run{run}_params_used.json"
+    with open(used_param_path, "w") as f:
+        json.dump(asdict(base_params), f, indent=2, sort_keys=True)
+
     
 
