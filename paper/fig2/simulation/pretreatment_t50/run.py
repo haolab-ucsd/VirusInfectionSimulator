@@ -9,7 +9,8 @@ run_many_and_save(
     cell_iter=10000,
     pretreat = True,
     t_start = 50.0,
-    dX0 = 10.0,
+    t_after_infection=600,
+    dX0 = 5,
     n_jobs = 20,
     out_dir="out",
 )
