@@ -10,7 +10,7 @@ run_many_and_save(
     pretreat = True,
     t_start = 50.0,
     t_after_infection=600,
-    dX0 = 5,
+    dX0 = 2.5,
     n_jobs = 20,
     out_dir="out",
 )
