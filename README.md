@@ -8,6 +8,8 @@ used in "*Interferon-driven altruistic cell death contributes to viral containme
 The code is organized as a reusable Python package
 to ensure reproducibility and parameter traceability.
 
+![Simulation Demo](movie/demo.gif)
+
 ## Model Overview
 
 The model represents cells arranged on a hexagonal lattice.
@@ -22,7 +24,6 @@ Each cell can exist in one of the following discrete states:
 Infection propagates via local neighbor interactions.
 The model is simulated using Gillespie SSA implemented in Tellurium.
 
-![Simulation Demo](movie/demo.gif)
 
 ### Implementation Notes
 
