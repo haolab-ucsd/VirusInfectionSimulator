@@ -22,6 +22,8 @@ Each cell can exist in one of the following discrete states:
 Infection propagates via local neighbor interactions.
 The model is simulated using Gillespie SSA implemented in Tellurium.
 
+![Simulation Demo](movie/demo.gif)
+
 ### Implementation Notes
 
 - The hexagonal neighbor structure is defined in `model/lattice.py`.
