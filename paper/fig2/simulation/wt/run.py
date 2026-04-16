@@ -7,7 +7,7 @@ run_many_and_save(
     params=params,
     runs=40,
     cell_iter=10000,
-    t_after_infection=600,
+    t_after_infection=1200,
     n_jobs = 20,
     out_dir="out",
 )
