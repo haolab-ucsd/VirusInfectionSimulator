@@ -23,11 +23,16 @@ def load_runs(pattern):
 
 
 def summarize_counts(df):
-    # cumulative infection = I + DA + DE (S in {1,2,4})
+    """
+    Updated version:
+      - infected_death = DA + DE  (S in {2,4})
+      - altruistic_death = DB     (S == 3)
+      - cumulative_infection = I + DA + DE (S in {1,2,4})
+    """
     g = df.groupby(["run", "T_step", "T"])["S"]
 
     out = g.agg(
-        infected_death=lambda s: np.sum(s == 2),
+        infected_death=lambda s: np.sum(s.isin([2, 4])),
         altruistic_death=lambda s: np.sum(s == 3),
         cumulative_infection=lambda s: np.sum(s.isin([1, 2, 4])),
     ).reset_index()
@@ -79,14 +84,17 @@ def plot_fig2c(merged, out_pdf="fig2c_repro.pdf", use_sem=False):
 
     fig, ax = plt.subplots(figsize=(4.2, 3.2), dpi=300)
 
+    # ---- Cumulative infection (black) ----
     lo, hi = band(gry_m, gry_s, n)
     ax.fill_between(T, lo, hi, color=COL_CUMUL, alpha=SHADE_ALPHA, linewidth=0)
     ax.plot(T, gry_m, color=COL_CUMUL, linewidth=2)
 
+    # ---- Infected death (red): now DA + DE ----
     lo, hi = band(red_m, red_s, n)
     ax.fill_between(T, lo, hi, color=COL_INFECTED, alpha=SHADE_ALPHA, linewidth=0)
     ax.plot(T, red_m, color=COL_INFECTED, linewidth=2)
 
+    # ---- Altruistic death (green): DB ----
     lo, hi = band(grn_m, grn_s, n)
     ax.fill_between(T, lo, hi, color=COL_ALTRUIST, alpha=SHADE_ALPHA, linewidth=0)
     ax.plot(T, grn_m, color=COL_ALTRUIST, linewidth=2)
@@ -106,41 +114,35 @@ def plot_fig2c(merged, out_pdf="fig2c_repro.pdf", use_sem=False):
     print(f"Saved: {out_pdf}")
 
 
-def summarize_ratio_db_over_da(df):
+def summarize_ratio_db_over_infected_death(df):
     """
-    For each run/timepoint, compute:
-      - cumulative_infection = number of cells with S in {1,2,4}
-      - DA_count = number of cells with S == 2
-      - DB_count = number of cells with S == 3
-      - death_ratio = DB / DA
+    Updated version:
+      - infected death denominator = DA + DE
+      - altruistic / infected death = DB / (DA + DE)
 
-    To mimic the MATLAB behavior:
-      - if DA == 0, ratio becomes inf or nan
-      - then all non-finite values are replaced by 0
+    To mimic the earlier MATLAB-style handling of undefined ratios:
+      - replace non-finite values with 0
     """
     g = df.groupby(["run", "T_step", "T"])["S"]
 
     out = g.agg(
         DA_count=lambda s: np.sum(s == 2),
         DB_count=lambda s: np.sum(s == 3),
+        DE_count=lambda s: np.sum(s == 4),
         cumulative_infection=lambda s: np.sum(s.isin([1, 2, 4])),
     ).reset_index()
 
-    with np.errstate(divide="ignore", invalid="ignore"):
-        out["death_ratio"] = out["DB_count"] / out["DA_count"]
+    denom = out["DA_count"] + out["DE_count"]
 
-    # Match MATLAB: death_ratio_all(~isfinite(death_ratio_all)) = 0;
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out["death_ratio"] = out["DB_count"] / denom
+
     out.loc[~np.isfinite(out["death_ratio"]), "death_ratio"] = 0.0
 
     return out
 
 
 def mean_and_band_ratio(summ):
-    """
-    Mean/SD across runs for:
-      - cumulative_infection
-      - death_ratio (= DB / DA)
-    """
     grp = summ.groupby(["T_step", "T"])
 
     mean = grp[["cumulative_infection", "death_ratio"]].mean().reset_index()
@@ -151,7 +153,7 @@ def mean_and_band_ratio(summ):
     return merged
 
 
-def plot_fig2c_like_fig1d(merged, out_pdf="fig2c_like_fig1d_DBoverDA.pdf", use_sem=False):
+def plot_fig2c_like_fig1d(merged, out_pdf="fig2c_like_fig1d_DBoverDAplusDE.pdf", use_sem=False):
     T = merged["T"].to_numpy()
     n = merged["n"].to_numpy()
 
@@ -185,7 +187,7 @@ def plot_fig2c_like_fig1d(merged, out_pdf="fig2c_like_fig1d_DBoverDA.pdf", use_s
     ax1.fill_between(T, lo, hi, color=COL_CUMUL_FILL, alpha=SHADE_ALPHA, linewidth=0)
     ax1.plot(T, cumul_m, color=COL_CUMUL_LINE, linewidth=2)
 
-    # ---- Right axis: DB / DA (orange) ----
+    # ---- Right axis: DB / (DA + DE) (orange) ----
     lo, hi = band(ratio_m, ratio_s, n)
     ax2.fill_between(T, lo, hi, color=COL_RATIO_FILL, alpha=SHADE_ALPHA, linewidth=0)
     ax2.plot(T, ratio_m, color=COL_RATIO_LINE, linewidth=2)
@@ -196,7 +198,6 @@ def plot_fig2c_like_fig1d(merged, out_pdf="fig2c_like_fig1d_DBoverDA.pdf", use_s
 
     ax1.set_xlim(T.min(), T.max())
 
-    # right-axis color correspondence
     ax1.tick_params(axis="y", colors=COL_CUMUL_LINE)
     ax2.tick_params(axis="y", colors=COL_RATIO_LINE)
 
@@ -206,7 +207,6 @@ def plot_fig2c_like_fig1d(merged, out_pdf="fig2c_like_fig1d_DBoverDA.pdf", use_s
     ax1.yaxis.label.set_color(COL_CUMUL_LINE)
     ax2.yaxis.label.set_color(COL_RATIO_LINE)
 
-    # let the orange axis scale fit the actual data
     ymax = np.nanmax(ratio_m + ratio_s)
     if not np.isfinite(ymax) or ymax <= 0:
         ymax = 1.0
@@ -224,18 +224,18 @@ def plot_fig2c_like_fig1d(merged, out_pdf="fig2c_like_fig1d_DBoverDA.pdf", use_s
 
 
 # ===== Execution =====
-# Original Fig 2C-like plot
 df = load_runs("../../simulation/wt/out/run*_tstart_0.csv")
+
+# Updated Fig 2C-like plot
 summ = summarize_counts(df)
 merged = mean_and_band(summ)
-plot_fig2c(merged, out_pdf="fig2c_repro.pdf", use_sem=False)
+plot_fig2c(merged, out_pdf="fig2c_repro_DAplusDE.pdf", use_sem=False)
 
-# Fig 1D-like plot: left = cumulative infection, right = DB / DA
-df_ratio = load_runs("../../simulation/wt/out/run*_tstart_0.csv")
-summ_ratio = summarize_ratio_db_over_da(df_ratio)
+# Updated Fig 1D-like plot
+summ_ratio = summarize_ratio_db_over_infected_death(df)
 merged_ratio = mean_and_band_ratio(summ_ratio)
 plot_fig2c_like_fig1d(
     merged_ratio,
-    out_pdf="fig2c_like_fig1d_DBoverDA.pdf",
+    out_pdf="fig2c_like_fig1d_DBoverDAplusDE.pdf",
     use_sem=False
 )
