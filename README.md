@@ -1,4 +1,4 @@
-# vsim (Temporary) — Stochastic Spatial Infection Simulator
+# vsim — Stochastic Spatial Infection Simulator
 
 This repository contains a stochastic, spatially explicit infection
 simulation model implemented using Tellurium (Gillespie SSA).
